@@ -1,0 +1,2 @@
+&mut sum_check_hyperplonk::Prover<F, ark_poly::multivariate::SparsePolynomial<F, SparseTerm>>: Step
+std::ops::Range<&mut sum_check_hyperplonk::Prover<F, ark_poly::multivariate::SparsePolynomial<F, SparseTerm>>>

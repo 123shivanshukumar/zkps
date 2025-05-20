@@ -54,35 +54,49 @@ F: Field + From<i32>,
         self.ans = sum;
     }
     fn construct_univariate(
-        g: &SparsePolynomial<F, SparseTerm>,
-        r_i: &[F], // random challenge till round i 
+        &mut self,
+        r: &[F], // random challenge till round i 
         round: usize,
     )-> DensePolynomial<F> // construct dense univ polynomial for this
     {
-        let mut coefficients = vec![F::zero(); g.degree() + 1];
-    let v = g.num_vars();
+        
+        let mut coefficients_prod = vec![F::zero(); self.f.degree() + self.g.degree() + 2]; // one extra to take eq
+        let v = self.f.num_vars();
 
     // number of inputs to generate, we substract round because it's the nb of already known
     // inputs at the round; at round 1 we will have r_i.len() = 1
     for i in 0..2i32.pow((v - round - 1) as u32) {
+
+        let mut coefficients_f = vec![F::zero(); self.f.degree() + 1];
+        let mut coefficients_g = vec![F::zero(); self.g.degree() + 1];
+
+        let mut eq_rem_const = F::one();
         let mut inputs: Vec<F> = vec![];
         // adding inputs from previous rounds
-        inputs.extend(r_i);
+        inputs.extend(r);
         // adding round variable
         inputs.push(F::zero());
         // generating inputs for the rest of the variables
         let mut counter = i;
-        for _ in 0..(v - round - 1) {
+        for j in 0..(v - round - 1) {
             if counter % 2 == 0 {
                 inputs.push(0.into());
+                eq_rem_const *= F::one() - self.rand[j + round+1];
             } else {
                 inputs.push(1.into());
+                eq_rem_const *= self.rand[j + round+1];
             }
             counter /= 2;
         }
+        eq_rem_const *= self.accum; // \Pi (r[t]*rand[t] + (1-r[t])*(1-rand[t])) for t = 0 to round - 1 
 
-        //computing polynomial coef from evaluation
-        for (c, t) in g.terms.clone().into_iter() {
+        let rand_i = self.rand[round];
+        self.accum = self.accum*(rand_i*r[round] + (F::one() - r[round])*(F::one() - rand_i)); // include the product from this round
+
+        
+        let coefficients_eq = vec![eq_rem_const*(rand_i - F::one()),eq_rem_const*(F::from(2)*rand_i - F::one())];
+
+        for (c, t) in self.f.terms.clone().into_iter() {
             let mut c_acc = F::one();
             let mut which = 0;
 
@@ -93,35 +107,37 @@ F: Field + From<i32>,
                     c_acc *= inputs[var].pow([pow as u64]);
                 }
             }
-            coefficients[which] += c * c_acc;
+            coefficients_f[which] += c * c_acc;
         }
+        //computing polynomial coef from evaluation
+        for (c, t) in self.g.terms.clone().into_iter() {
+            let mut c_acc = F::one();
+            let mut which = 0;
+
+            for (&var, pow) in t.vars().iter().zip(t.powers()) {
+                if var == round {
+                    which = pow;
+                } else {
+                    c_acc *= inputs[var].pow([pow as u64]);
+                }
+            }
+            coefficients_g[which] += c * c_acc;
+        }
+        for _i in 0..coefficients_f.len(){
+            for _j in  0..coefficients_g.len(){
+                for _k in 0..coefficients_eq.len()
+                {
+                    coefficients_prod[_i+_j+_k] += coefficients_f[_i]*coefficients_g[_j]*coefficients_eq[_k];
+                }
+            }
+        }
+
     }
 
-    DensePolynomial::from_coefficients_vec(coefficients)
+
+    DensePolynomial::from_coefficients_vec(coefficients_prod)
     }
     
-    
-    pub fn construct_univariate_product(
-        &mut self,
-        r_i: &[F], // random challenge till round i 
-        round: usize,
-    )->DensePolynomial<F>
-    {
-        // construct separately for efficiency
-        let f_i = Prover::construct_univariate(&(self.f), r_i,round);
-
-        let g_i: DensePolynomial<F> = Prover::construct_univariate(&(self.g), r_i,round);
-        // intialise eq polynomial as x*r_i + (1-x)*(1-r_i) = 1 - r_i + (2*r_i-1)x
-        let rand_i = self.rand[round];
-        let coeffs = vec![F::one() - rand_i, F::from(2)*rand_i - F::one()];
-        let eq_i = DensePolynomial::from_coefficients_vec(coeffs);
-
-        let mut prod = f_i.naive_mul(&g_i);
-        prod = prod.naive_mul(&eq_i);
-
-        self.accum = self.accum*eq_i.evaluate(&r_i[round]);
-        prod
-    }
     pub fn commit_pair(&self)->(SparsePolynomial<F,SparseTerm>, SparsePolynomial<F,SparseTerm>){
         (self.f.clone(), self.g.clone())
     }
@@ -193,7 +209,7 @@ F: Field + From<i32>,
     let mut r: Vec<F> = Vec::new(); // vector of random challenges
     
     // product computation will be done during initialisation 
-    let f_1 = p.construct_univariate_product(&r, 0); // check 
+    let f_1 = p.construct_univariate(&r, 0); // check 
         // h represents the product
     
     if !v.check_claim(&f_1, p.ans){ 
@@ -210,7 +226,7 @@ F: Field + From<i32>,
     for round in 1.. num_vars-1{
     
         // constructing separately to avoid multiplication complexity
-        let f_i = p.construct_univariate_product(&r, round);
+        let f_i = p.construct_univariate(&r, round);
 
         if !v.check_claim(&f_i, c_i){ 
             panic!("claim fails at 0");
@@ -223,7 +239,7 @@ F: Field + From<i32>,
     
         // value checking round 
     
-    let f_v = p.construct_univariate_product( &r, num_vars - 1);
+    let f_v = p.construct_univariate( &r, num_vars - 1);
 
     r_i = v.send_random_challenge();
     r.push(r_i);
