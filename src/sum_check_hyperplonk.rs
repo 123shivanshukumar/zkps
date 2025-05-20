@@ -229,7 +229,7 @@ F: Field + From<i32>,
         let f_i = p.construct_univariate(&r, round);
 
         if !v.check_claim(&f_i, c_i){ 
-            panic!("claim fails at 0");
+            panic!("claim fails at {round}");
         }
         // construct new random challenge for next round 
         r_i = v.send_random_challenge();
