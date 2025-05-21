@@ -1,25 +1,77 @@
 // to check the f*g*eq using sum_check protocol
 // trying to code end to end from scratch
-use ark_poly::{univariate::DensePolynomial, multivariate::{SparsePolynomial, SparseTerm, Term}, DenseMVPolynomial, DenseUVPolynomial, Polynomial}; 
 use ark_ff:: {Field}; // for generating field elements 
 use rand::random;
-use ark_test_curves::fp128::Fq; // to be used in main
-pub struct Prover<F, P>
+
+pub struct multivariate_polnomial<F>
+where F: Field + From<i32>
+{
+    vars : usize,
+    poly : Vec<F>
+}
+pub struct univariate_polynomial<F>
+where F: Field + From<i32>
+{
+    poly: Vec<F>,
+}
+impl <F> univariate_polynomial<F>
+where F: Field + From<i32>{
+    fn from_coefficients_vec(coeffs: &Vec<F>) -> Self {
+        Self{
+            poly: coeffs,
+        }
+    }
+    fn evaluate(r: &F)->F{
+        // use Horner rule
+        let mut sum = F::zero();
+        for i in (0..poly.len()).rev(){
+            sum = sum*r + poly[i];
+        }
+        sum;
+    }
+}
+impl <F> multivariate_polnomial<F>
+where F: Field + From<i32>
+{
+    pub fn num_vars(&self)->usize{
+        vars
+    }
+    pub fn evaluate(&self, v : &Vec<F>)->F{
+        let mut sum = F::zero();
+        for i in 0..(1<<self.num_vars()){
+            // go thru all the bits and see what to accumulate 
+            let mut factor = self.poly[i];
+            let mut var_number = 0;
+            let mut j = i;
+
+            while j > 0 {
+                if j % 2 != 0{ // include this variable
+                    factor *= v[var_number];
+                }
+                j = j >> 1;
+            }
+            sum += factor;
+        }
+    }
+}
+pub struct Prover<F,P>
 {
     f: P,
-    g: P,
+    g: P, // to search for the coefficient of x_i1 .. x_ik set those bits and query the vector
     rand: Vec<F>,
     ans: F,
     accum:F // accumulate round by round value of x_i*r_i + (1-x_i)*(1-r_i)
 }
 //P is SparsePolynomial<F, SparseTerm> --traits vs structs and how to use them
 // this is so inconvinient  
-impl <F> Prover<F,SparsePolynomial<F, SparseTerm> >
+
+
+impl <F> Prover<F>
 where 
 F: Field + From<i32>,
 
 {
-    pub fn new(f:SparsePolynomial<F, SparseTerm>, g:SparsePolynomial<F, SparseTerm>)->Self{
+    pub fn new(f:vec<F>, g:vec<F>)->Self{
         Self{
             f:f.clone(),
             g:g.clone(),
@@ -49,7 +101,7 @@ F: Field + From<i32>,
             }
         }
         if flag{
-            sum = self.f.evaluate(&self.rand);
+            sum = f.evaluate(&self.rand);
         }
         self.ans = sum;
     }
@@ -57,25 +109,26 @@ F: Field + From<i32>,
         &mut self,
         r: &[F], // random challenge till round i 
         round: usize,
-    )-> DensePolynomial<F> // construct dense univ polynomial for this
+    )-> univariate_polnomial<F>// construct dense univ polynomial for this
     {
         
-        let mut coefficients_prod = vec![F::zero(); self.f.degree() + self.g.degree() + 2]; // one extra to take eq
+        let mut coefficients_prod = vec![F::zero(); 4]; // one extra to take eq
         let v = self.f.num_vars();
 
     // number of inputs to generate, we substract round because it's the nb of already known
     // inputs at the round; at round 1 we will have r_i.len() = 1
+
     for i in 0..2i32.pow((v - round - 1) as u32) {
 
-        let mut coefficients_f = vec![F::zero(); self.f.degree() + 1];
-        let mut coefficients_g = vec![F::zero(); self.g.degree() + 1];
+        let mut coefficients_f = vec![F::zero(); 2];
+        let mut coefficients_g = vec![F::zero(); 2]; // known that multilinear
 
         let mut eq_rem_const = F::one();
         let mut inputs: Vec<F> = vec![];
         // adding inputs from previous rounds
         inputs.extend(r);
         // adding round variable
-        inputs.push(F::zero());
+        inputs.push(F::one());
         // generating inputs for the rest of the variables
         let mut counter = i;
         for j in 0..(v - round - 1) {
@@ -88,6 +141,7 @@ F: Field + From<i32>,
             }
             counter /= 2;
         }
+
         eq_rem_const *= self.accum; // \Pi (r[t]*rand[t] + (1-r[t])*(1-rand[t])) for t = 0 to round - 1 
 
         let rand_i = self.rand[round];
@@ -96,33 +150,27 @@ F: Field + From<i32>,
         
         let coefficients_eq = vec![eq_rem_const*(rand_i - F::one()),eq_rem_const*(F::from(2)*rand_i - F::one())];
 
-        for (c, t) in self.f.terms.clone().into_iter() {
-            let mut c_acc = F::one();
-            let mut which = 0;
-
-            for (&var, pow) in t.vars().iter().zip(t.powers()) {
-                if var == round {
-                    which = pow;
-                } else {
-                    c_acc *= inputs[var].pow([pow as u64]);
-                }
+       
+        // wherever the variable is present those become the x coefficient, wherver they become constant
+        for i in 0..v{
+            if & (1<<round) == 0{
+                coefficients_f[0] += self.f.poly[i];
             }
-            coefficients_f[which] += c * c_acc;
-        }
-        //computing polynomial coef from evaluation
-        for (c, t) in self.g.terms.clone().into_iter() {
-            let mut c_acc = F::one();
-            let mut which = 0;
-
-            for (&var, pow) in t.vars().iter().zip(t.powers()) {
-                if var == round {
-                    which = pow;
-                } else {
-                    c_acc *= inputs[var].pow([pow as u64]);
-                }
+            else{
+                coefficients_f[1] += self.f.poly[i];
             }
-            coefficients_g[which] += c * c_acc;
         }
+        // same for g
+        for i in 0..v{
+            if & (1<<round) == 0{
+                coefficients_g[0] += self.g.poly[i];
+            }
+            else{
+                coefficients_g[1] += self.g.poly[i];
+            }
+        }
+
+
         for _i in 0..coefficients_f.len(){
             for _j in  0..coefficients_g.len(){
                 for _k in 0..coefficients_eq.len()
@@ -135,10 +183,10 @@ F: Field + From<i32>,
     }
 
 
-    DensePolynomial::from_coefficients_vec(coefficients_prod)
+    univariate_polnomial<F>::from_coefficients_vec(coefficients_prod)
     }
     
-    pub fn commit_pair(&self)->(SparsePolynomial<F,SparseTerm>, SparsePolynomial<F,SparseTerm>){
+    pub fn commit_pair(&self)->(multivariate_polnomial<F>, multivariate_polnomial<F>){
         (self.f.clone(), self.g.clone())
     }
 
@@ -172,7 +220,7 @@ F : Field + From<i32>
         r
     }
     
-    pub fn check_claim(&self, h:&DensePolynomial<F>, c_i:F)->bool{
+    pub fn check_claim(&self, h:&univariate_polnomial<F>, c_i:F)->bool{
         let eval_zero = h.evaluate(&F::zero());
         let eval_one = h.evaluate(&F::one());
         
@@ -181,7 +229,7 @@ F : Field + From<i32>
         }
         true
     }
-    pub fn check_final_claim(&self, commit_f: SparsePolynomial<F,SparseTerm>, commit_g: SparsePolynomial<F,SparseTerm>,c: F, intial_rand:Vec<F>, r:Vec<F>)->bool
+    pub fn check_final_claim(&self, commit_f: multivariate_polnomial<F>, commit_g: multivariate_polnomial<F>,c: F, intial_rand:Vec<F>, r:Vec<F>)->bool
     {   
         // rand is the initial random vector for the protocol
         let mut eval = commit_f.evaluate(&r)*commit_g.evaluate(&r);
@@ -193,7 +241,7 @@ F : Field + From<i32>
     }
 }
 
-pub fn sum_check<F>(p: &mut Prover<F, SparsePolynomial<F,SparseTerm>>, v: &Verifier<F>)->bool
+pub fn sum_check<F>(p: &mut Prover<F, multivariate_polnomial<F>>, v: &Verifier<F>)->bool
 where 
 F: Field + From<i32>,
 {   
@@ -253,4 +301,3 @@ F: Field + From<i32>,
     true // accept the claim if didnt panic
 }
     
-
