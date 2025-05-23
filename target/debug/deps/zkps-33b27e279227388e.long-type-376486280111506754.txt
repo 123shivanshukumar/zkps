@@ -1,0 +1,1 @@
+fn(_) -> Fp<MontBackend<FqConfig, 2>, 2> {<Fp<MontBackend<FqConfig, 2>, 2> as From<_>>::from}: Field

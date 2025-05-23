@@ -1,44 +1,52 @@
 // to check the f*g*eq using sum_check protocol
 // trying to code end to end from scratch
-use ark_ff:: {Field}; // for generating field elements 
+// for generating field elements 
 use rand::random;
-
-pub struct multivariate_polnomial<F>
-where F: Field + From<i32>
+pub struct MultivariatePolynomial
 {
     vars : usize,
-    poly : Vec<F>
+    poly : Vec<i32>
 }
-pub struct univariate_polynomial<F>
-where F: Field + From<i32>
+
+pub struct UnivariatePolynomial
 {
-    poly: Vec<F>,
+    poly: Vec<i32>,
 }
-impl <F> univariate_polynomial<F>
-where F: Field + From<i32>{
-    fn from_coefficients_vec(coeffs: &Vec<F>) -> Self {
+impl UnivariatePolynomial
+{
+    pub fn new(poly:Vec<i32>)->Self{
         Self{
-            poly: coeffs,
+            poly:poly.clone(),
         }
     }
-    fn evaluate(r: &F)->F{
-        // use Horner rule
-        let mut sum = F::zero();
-        for i in (0..poly.len()).rev(){
-            sum = sum*r + poly[i];
+    pub fn from_coefficients_vec(coeffs: &Vec<i32>) -> Self {
+        Self{
+            poly: coeffs.clone(),
         }
-        sum;
+    }
+    pub fn evaluate(&self,r: &i32)->i32{
+        // use Horner rule
+        let mut sum = 0;
+        for i in (0..self.poly.len()).rev(){
+            sum = sum*(r) + self.poly[i];
+        }
+        sum.into()
     }
 }
-impl <F> multivariate_polnomial<F>
-where F: Field + From<i32>
+impl  MultivariatePolynomial
 {
-    pub fn num_vars(&self)->usize{
-        vars
+    pub fn new(n:usize, poly:Vec<i32>)->Self{
+        Self{
+            vars:n,
+            poly:poly.clone(),
+        }
     }
-    pub fn evaluate(&self, v : &Vec<F>)->F{
-        let mut sum = F::zero();
-        for i in 0..(1<<self.num_vars()){
+    pub fn num_vars(&self)->usize{
+        self.vars
+    }
+    pub fn evaluate(&self, v : &Vec<i32>)->i32{
+        let mut sum = 0;
+        for i in 0..1<<self.num_vars(){
             // go thru all the bits and see what to accumulate 
             let mut factor = self.poly[i];
             let mut var_number = 0;
@@ -46,43 +54,44 @@ where F: Field + From<i32>
 
             while j > 0 {
                 if j % 2 != 0{ // include this variable
-                    factor *= v[var_number];
+                    factor = factor*v[var_number];
                 }
                 j = j >> 1;
+                var_number += 1;
             }
-            sum += factor;
+            sum = sum + factor;
         }
+        sum
     }
 }
-pub struct Prover<F,P>
+pub struct Prover
 {
-    f: P,
-    g: P, // to search for the coefficient of x_i1 .. x_ik set those bits and query the vector
-    rand: Vec<F>,
-    ans: F,
-    accum:F // accumulate round by round value of x_i*r_i + (1-x_i)*(1-r_i)
+    f: MultivariatePolynomial,
+    g: MultivariatePolynomial, // to search for the coefficient of x_i1 .. x_ik set those bits and query the vector
+    rand: Vec<i32>,
+    ans: i32,
+    accum:i32 // accumulate round by round value of x_i*r_i + (1-x_i)*(1-r_i)
 }
-//P is SparsePolynomial<F, SparseTerm> --traits vs structs and how to use them
+//P is SparsePolynomial<i32, SparseTerm> --traits vs structs and how to use them
 // this is so inconvinient  
 
 
-impl <F> Prover<F>
+impl Prover
 where 
-F: Field + From<i32>,
-
 {
-    pub fn new(f:vec<F>, g:vec<F>)->Self{
+    pub fn new(n:usize, f:Vec<i32>, g:Vec<i32>)->Self{
         Self{
-            f:f.clone(),
-            g:g.clone(),
-            ans:F::zero(),
+            f:MultivariatePolynomial { vars: n, poly: f.clone() },
+            g:MultivariatePolynomial { vars: n, poly: g.clone() },
+            ans:0.into(),
             rand:Vec::new(),
-            accum:F::one()
+            accum:1.into()
         }
     }
-    pub fn receive_intial_rand(&mut self, r: Vec<F>){ // to set self to mut to change it 
+    pub fn receive_intial_rand(&mut self, r: Vec<i32>){ // to set self to mut to change it 
         self.rand = r.clone();
         self.sum_evaluate(); // start sum evaluation after receiving random challenge
+        
     }
     fn sum_evaluate(&mut self){
         // go over every element in the boolean hypercube and evaluate 
@@ -91,126 +100,122 @@ F: Field + From<i32>,
         // if the intial random vector `rand` sent by the Verifer is an element of the hypercube, then 
         // evaluate f and g over rand, multilply and this is the sum
         // else the sum is 0
-        let mut sum = F::zero();
-        let mut flag = false;
-
-        for i in 0..mu{
-            if self.rand[i] != F::zero() || self.rand[i] != F::one(){
-                flag = true;
-                break
+        let mut sum = 0;
+        for i in 0..(1<<mu){
+            let mut inputs = vec![0;mu];
+            let mut j = i;
+            let mut counter = 0;
+            let mut eq_rem_const = 1;
+            while counter < mu{
+                if j % 2 == 0 {
+                    inputs[mu - counter - 1] = 0;
+                    eq_rem_const *= 1 - self.rand[mu - counter - 1];
+                } else {
+                    inputs[mu - counter - 1] = 1;
+                    eq_rem_const *= self.rand[mu - counter - 1];
+                }
+                counter += 1;
+                j = j >> 1;
             }
+
+            sum += self.f.evaluate(&inputs)*self.g.evaluate(&inputs)*eq_rem_const;
         }
-        if flag{
-            sum = f.evaluate(&self.rand);
-        }
+        
         self.ans = sum;
     }
     fn construct_univariate(
         &mut self,
-        r: &[F], // random challenge till round i 
+        r: &[i32], // random challenge till round i 
         round: usize,
-    )-> univariate_polnomial<F>// construct dense univ polynomial for this
+    )-> UnivariatePolynomial// construct dense univ polynomial for this
     {
         
-        let mut coefficients_prod = vec![F::zero(); 4]; // one extra to take eq
+        let mut coefficients_prod = vec![0; 4]; // one extra to take eq
         let v = self.f.num_vars();
 
     // number of inputs to generate, we substract round because it's the nb of already known
     // inputs at the round; at round 1 we will have r_i.len() = 1
 
-    for i in 0..2i32.pow((v - round - 1) as u32) {
+    for i in 0..1<<(v- round - 1) {
 
-        let mut coefficients_f = vec![F::zero(); 2];
-        let mut coefficients_g = vec![F::zero(); 2]; // known that multilinear
+        let mut coefficients_f = vec![0; 2];
+        let mut coefficients_g = vec![0; 2]; // known that multilinear
 
-        let mut eq_rem_const = F::one();
-        let mut inputs: Vec<F> = vec![];
+        let mut eq_rem_const = 1;
+        let mut inputs: Vec<i32> = vec![];
         // adding inputs from previous rounds
-        inputs.extend(r);
-        // adding round variable
-        inputs.push(F::one());
+        let rand_i = self.rand[round];
+        if round > 0{ inputs.extend(r);}
+            // adding round variable
+            inputs.push(0);
+            inputs.extend(vec![0;v-round-1]);
         // generating inputs for the rest of the variables
         let mut counter = i;
         for j in 0..(v - round - 1) {
             if counter % 2 == 0 {
-                inputs.push(0.into());
-                eq_rem_const *= F::one() - self.rand[j + round+1];
+                inputs[v - j - 1] = 0;
+                eq_rem_const *= 1 - self.rand[v - j - 1];
             } else {
-                inputs.push(1.into());
-                eq_rem_const *= self.rand[j + round+1];
+                inputs[v - j - 1] = 1;
+                eq_rem_const *= self.rand[v - j - 1];
             }
             counter /= 2;
+         // \Pi (r[t]*rand[t] + (1-r[t])*(1-rand[t])) for t = 0 to round - 1 
+
         }
-
-        eq_rem_const *= self.accum; // \Pi (r[t]*rand[t] + (1-r[t])*(1-rand[t])) for t = 0 to round - 1 
-
-        let rand_i = self.rand[round];
-        self.accum = self.accum*(rand_i*r[round] + (F::one() - r[round])*(F::one() - rand_i)); // include the product from this round
-
         
-        let coefficients_eq = vec![eq_rem_const*(rand_i - F::one()),eq_rem_const*(F::from(2)*rand_i - F::one())];
-
+       // println!("{eq_rem_const}"); // shud be 0
+        if round > 0{self.accum = self.accum*(self.rand[round-1]*r[round - 1] + (1 - r[round - 1])*(1 - self.rand[round-1]));} // include the product from this round
+        eq_rem_const *= self.accum; // multiply the self.accum from previous round
+        let coefficients_eq = vec![eq_rem_const*(1-rand_i), eq_rem_const*(2*rand_i - 1)];
        
         // wherever the variable is present those become the x coefficient, wherver they become constant
-        for i in 0..v{
-            if & (1<<round) == 0{
-                coefficients_f[0] += self.f.poly[i];
-            }
-            else{
-                coefficients_f[1] += self.f.poly[i];
-            }
-        }
-        // same for g
-        for i in 0..v{
-            if & (1<<round) == 0{
-                coefficients_g[0] += self.g.poly[i];
-            }
-            else{
-                coefficients_g[1] += self.g.poly[i];
-            }
-        }
-
-
-        for _i in 0..coefficients_f.len(){
-            for _j in  0..coefficients_g.len(){
-                for _k in 0..coefficients_eq.len()
+        
+        coefficients_f[0] = self.f.evaluate(&inputs);
+        coefficients_g[0] = self.g.evaluate(&inputs);
+        inputs[round] = 1;
+        coefficients_f[1] = self.f.evaluate(&inputs) - coefficients_f[0];
+        coefficients_g[1] = self.g.evaluate(&inputs) - coefficients_g[0];
+      
+        
+        for _i in 0..2{
+            for _j in  0..2{
+                for _k in 0..2
                 {
                     coefficients_prod[_i+_j+_k] += coefficients_f[_i]*coefficients_g[_j]*coefficients_eq[_k];
                 }
             }
         }
-
+    
     }
 
 
-    univariate_polnomial<F>::from_coefficients_vec(coefficients_prod)
+    UnivariatePolynomial::from_coefficients_vec(&coefficients_prod)
     }
     
-    pub fn commit_pair(&self)->(multivariate_polnomial<F>, multivariate_polnomial<F>){
-        (self.f.clone(), self.g.clone())
+    pub fn commit_pair(&self, mut commit_f: Vec<i32>, mut commit_g : Vec<i32> ){
+        commit_f = self.f.poly.clone();
+        commit_g = self.g.poly.clone();
     }
 
 }
-pub struct Verifier<F>
+pub struct Verifier
 where 
-F : Field + From<i32>
 {   
-    _data : F // dummy to keep Field + From<i32> alive
+    _data : i32 // dummy to keep i32ield + i32rom<i32> alive
 }
-impl<F> Verifier<F>
-where 
-F : Field + From<i32>
+impl Verifier
 {
-    pub fn new()->Self{
+    pub fn new(data:i32)->Self{
         Self{
-            _data: F::zero()
+            _data: data
         }
     }
-    pub fn send_random_challenge(&self)->F{
+    pub fn send_random_challenge(&self)->i32{
         let r:i32 = random();
-        F::from(r)
+        r%10
     }
-    pub fn send_random_vector_init(&self, num_vars:usize)->Vec<F>{
+    pub fn send_random_vector_init(&self, num_vars:usize)->Vec<i32>{
         let mut r = Vec::new();
         let mut r_i;
         for _i in 0..num_vars{ // unused variable _
@@ -220,20 +225,20 @@ F : Field + From<i32>
         r
     }
     
-    pub fn check_claim(&self, h:&univariate_polnomial<F>, c_i:F)->bool{
-        let eval_zero = h.evaluate(&F::zero());
-        let eval_one = h.evaluate(&F::one());
+    pub fn check_claim(&self, h:&UnivariatePolynomial, c_i:i32)->bool{
+        let eval_zero = h.evaluate(&0);
+        let eval_one = h.evaluate(&1);
         
         if eval_one + eval_zero != c_i{
             return false
         }
         true
     }
-    pub fn check_final_claim(&self, commit_f: multivariate_polnomial<F>, commit_g: multivariate_polnomial<F>,c: F, intial_rand:Vec<F>, r:Vec<F>)->bool
+    pub fn check_final_claim(&self, commit_f: MultivariatePolynomial, commit_g: MultivariatePolynomial,c: i32, intial_rand:Vec<i32>, r:Vec<i32>)->bool
     {   
         // rand is the initial random vector for the protocol
         let mut eval = commit_f.evaluate(&r)*commit_g.evaluate(&r);
-        let one = F::one();
+        let one = 1;
         for i in 0..commit_f.num_vars(){
             eval = eval*(r[i]*intial_rand[i] + (one-r[i])*(one-intial_rand[i]));
         }
@@ -241,9 +246,7 @@ F : Field + From<i32>
     }
 }
 
-pub fn sum_check<F>(p: &mut Prover<F, multivariate_polnomial<F>>, v: &Verifier<F>)->bool
-where 
-F: Field + From<i32>,
+pub fn sum_check(p: & mut Prover, v: &Verifier)->bool
 {   
     let num_vars = p.f.num_vars();
     // assuming Prover and Verifier have been created in main
@@ -254,7 +257,7 @@ F: Field + From<i32>,
 
     //sum check starts
   
-    let mut r: Vec<F> = Vec::new(); // vector of random challenges
+    let mut r: Vec<i32> = Vec::new(); // vector of random challenges
     
     // product computation will be done during initialisation 
     let f_1 = p.construct_univariate(&r, 0); // check 
@@ -292,9 +295,12 @@ F: Field + From<i32>,
     r_i = v.send_random_challenge();
     r.push(r_i);
     
-    let (commit_f, commit_g) = p.commit_pair();
+    let ( commit_f,  commit_g) = (p.f.poly.clone(), p.g.poly.clone());
+    let commit_f_poly = MultivariatePolynomial{vars:p.f.num_vars(), poly:commit_f };
+    let commit_g_poly = MultivariatePolynomial{vars:p.g.num_vars(), poly:commit_g };
+    
     let c = f_v.evaluate(&r_i); // f_i(r_i)*g_i(r_i)*eq_i(r_i) 
-    if !v.check_final_claim(commit_f, commit_g, c,initial_rand.clone(), r){ 
+    if !v.check_final_claim(commit_f_poly, commit_g_poly, c,initial_rand.clone(), r){ 
         panic!("claim fails at last round");
     }
     
