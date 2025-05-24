@@ -28,7 +28,7 @@ impl UnivariatePolynomial
         // use Horner rule
         let mut sum = 0;
         for i in (0..self.poly.len()).rev(){
-            sum = sum*(r) + self.poly[i];
+            sum = sum*r + self.poly[i];
         }
         sum.into()
     }
@@ -85,7 +85,7 @@ where
             g:MultivariatePolynomial { vars: n, poly: g.clone() },
             ans:0.into(),
             rand:Vec::new(),
-            accum:1.into()
+            accum:1
         }
     }
     pub fn receive_intial_rand(&mut self, r: Vec<i32>){ // to set self to mut to change it 
@@ -101,6 +101,7 @@ where
         // evaluate f and g over rand, multilply and this is the sum
         // else the sum is 0
         let mut sum = 0;
+        let mut sum_0 = 0;
         for i in 0..(1<<mu){
             let mut inputs = vec![0;mu];
             let mut j = i;
@@ -117,7 +118,7 @@ where
                 counter += 1;
                 j = j >> 1;
             }
-
+            if i%2 == 0{sum_0 += self.f.evaluate(&inputs)*self.g.evaluate(&inputs)*eq_rem_const;}
             sum += self.f.evaluate(&inputs)*self.g.evaluate(&inputs)*eq_rem_const;
         }
         
@@ -135,6 +136,7 @@ where
 
     // number of inputs to generate, we substract round because it's the nb of already known
     // inputs at the round; at round 1 we will have r_i.len() = 1
+    if round > 0{self.accum = self.accum*(self.rand[round-1]*r[round - 1] + (1 - r[round - 1])*(1 - self.rand[round-1]));} // include the product from this round
 
     for i in 0..1<<(v- round - 1) {
 
@@ -159,13 +161,11 @@ where
                 inputs[v - j - 1] = 1;
                 eq_rem_const *= self.rand[v - j - 1];
             }
-            counter /= 2;
+            counter = counter>>1;
          // \Pi (r[t]*rand[t] + (1-r[t])*(1-rand[t])) for t = 0 to round - 1 
 
         }
         
-       // println!("{eq_rem_const}"); // shud be 0
-        if round > 0{self.accum = self.accum*(self.rand[round-1]*r[round - 1] + (1 - r[round - 1])*(1 - self.rand[round-1]));} // include the product from this round
         eq_rem_const *= self.accum; // multiply the self.accum from previous round
         let coefficients_eq = vec![eq_rem_const*(1-rand_i), eq_rem_const*(2*rand_i - 1)];
        
@@ -212,8 +212,8 @@ impl Verifier
         }
     }
     pub fn send_random_challenge(&self)->i32{
-        let r:i32 = random();
-        r%10
+        //let r:i32 = random();
+        2
     }
     pub fn send_random_vector_init(&self, num_vars:usize)->Vec<i32>{
         let mut r = Vec::new();
@@ -226,6 +226,7 @@ impl Verifier
     }
     
     pub fn check_claim(&self, h:&UnivariatePolynomial, c_i:i32)->bool{
+
         let eval_zero = h.evaluate(&0);
         let eval_one = h.evaluate(&1);
         
